@@ -1,5 +1,6 @@
 package il.ac.idc.cs.sinkhole;
 
+import java.io.IOException;
 import java.net.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -7,10 +8,27 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-class SinkholeServer
-{
-    public static void main(String[] args)
-    {
+class SinkholeServer {
+
+    // Constants
+    static final int maxIterations = 16;
+    static final int dnsPort = 53;
+    static final int bufSize = 1024;
+
+
+    // Data members
+    static List<String> rootServers;
+    static DatagramSocket serverSocket;
+    static Random rnd;
+
+    static {
+        rootServers = Stream.of("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m")
+                .map(x -> x.concat(".root-servers.net")).collect(Collectors.toList());
+        rnd = new Random();
+    }
+
+    public static void main(String[] args) {
+
         try {
 
             if (args.length > 1) {
@@ -22,205 +40,180 @@ class SinkholeServer
             if (args.length == 1) {
                 List<String> lines = Files.readAllLines(Path.of(args[0]));
                 blockList = new HashSet<>(lines);
+                System.out.println("Loaded block list into the memory.");
             }
 
-            Random rnd = new Random();
-            final int maxIterations = 16;
-            final List<String> rootServers = Stream.of("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m")
-                    .map(x -> x.concat(".root-servers.net")).collect(Collectors.toList());
-            final int dnsPort = 53;
-            final int bufSize = 1024;
-            final int QRoffset = 2;
-            final int RcodeOffset = 3;
-            final int ANCountOffset = 6;
-            final int NSCountOffset = 8;
-            final int SectionQuestionOffset = 12;
-
-            // The DNS server listen on port 5300
-            DatagramSocket serverSocket = new DatagramSocket(5300);
+            serverSocket = new DatagramSocket(5300);
+            System.out.println("The DNS server is listening on port 5300");
 
             while (true) {
 
-                byte[] receiveData = new byte[bufSize];
-                DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                byte[] baseData = new byte[bufSize];
+                DatagramPacket basePacket = new DatagramPacket(baseData, baseData.length);
 
                 // Blocks until datagram received from the client
-                serverSocket.receive(receivePacket);
+                serverSocket.receive(basePacket);
 
-                String domainName = extractDomainName(receiveData, SectionQuestionOffset);
+                byte firstByte = baseData[0];
+
+                InetAddress clientAddress = basePacket.getAddress();
+                int clientPort = basePacket.getPort();
+
+                DnsParser baseParser = new DnsParser(baseData);
+
+                String domainName = baseParser.getQuestionName();
+
+                System.out.println("Received a DNS query for domain name: " + domainName);
 
                 // Check if the domain name that needs to be resolved is in the specified block list
                 if (blockList != null && blockList.contains(domainName)) {
 
-                    // Change QR to one to indicate the message is a response // TODO: maybe I don't need to set it in this case
-                    byte qr = (byte)(receiveData[QRoffset] | 0b10000000);
-                    receiveData[QRoffset] = qr;
+                    baseParser.changeHeaderFlags((byte)3); // response code 3 indicates NXDOMAIN error.
 
-                    // change response code to NXDOMAIN error
-                    byte rcode = (byte)(receiveData[RcodeOffset] | 0b000000011);
-                    receiveData[RcodeOffset] = rcode;
-
-                    DatagramPacket sendPacket = new DatagramPacket(receiveData, receivePacket.getLength(), receivePacket.getAddress(), receivePacket.getPort());
+                    DatagramPacket sendPacket = new DatagramPacket(baseParser.getData(), basePacket.getLength(), clientAddress, clientPort);
                     serverSocket.send(sendPacket);
                     continue;
                 }
 
-                // Assume the number of entries in the question section is 1.
-
                 // Send the DNS query to a randomly chosen root server
-                int randomIndex = rnd.nextInt(rootServers.size());
-                String rootServer = rootServers.get(randomIndex);
-                InetAddress IPAddress = InetAddress.getByName(rootServer);
+                InetAddress IPAddress = getRandomRootServerIP();
 
-                byte[] sendData = new byte[bufSize];
-                System.arraycopy(receiveData, 0, sendData, 0, bufSize);
+                baseData[0]++;
+                basePacket.setData(baseData, 0, basePacket.getLength());
+                basePacket.setAddress(IPAddress);
+                basePacket.setPort(dnsPort);
 
-                DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, dnsPort);
-                serverSocket.send(sendPacket);
+                serverSocket.send(basePacket);
 
-                serverSocket.receive(sendPacket);
+                byte[] recieveData = new byte[bufSize];
+                DatagramPacket recievePacket = new DatagramPacket(recieveData, recieveData.length);
 
-                // response code (RCODE) is 0 if there is no error
-                int responseCode = createNum(sendData[RcodeOffset], 4, 4);
+                serverSocket.receive(recievePacket);
 
-                // ANCOUNT = an unsigned 16 bit integer specifying the number of resource records in the answer section.
-                int answerCount = createNum(sendData[ANCountOffset], sendData[ANCountOffset + 1]);
+                while (recieveData[0] != baseData[0]) {
+                    serverSocket.receive(recievePacket);
+                }
 
-                // NSCOUNT = an unsigned 16 bit integer specifying the number of name server resource records in the authority records section.
-                int nameServerCount = createNum(sendData[NSCountOffset], sendData[NSCountOffset + 1]);
+                DnsParser parser = new DnsParser(recieveData);
+
+                // TODO: Continue here tomorrow.
+
+                
+
+                int responseCode = parser.getResponseCode();
+                int answerCount = parser.getAnswerCount();
+                int nameServerCount = parser.getNameServerCount();
 
                 int iteration = 0;
 
                 while (responseCode == 0 && answerCount == 0 && nameServerCount > 0 && iteration < maxIterations) {
 
                     // Send the query to the first name server in the AUTHORITY section
-
-                    // Read the RDATA
-                    int index = SectionQuestionOffset;
-                    int currLength = sendData[index];
-                    while (currLength > 0) {
-
-                        index += currLength + 1;
-                        currLength = sendData[index];
-                    }
-
-                    index++;
-
-                    // Skip 4 bytes of QTYPE and QCLASS
-                    index += 4;
-
-                    // Skip to RDATA
-                    currLength = sendData[index];
-
-                    while(sendData[index] != 0){
-                        index++;
-                    }
-
-                    index++;
-
-                    // Skip 8 bytes of type, class and ttl.
-                    index+=8;
-
-                    index--; // tODO: why
-
-                    int resourceLength = createNum(sendData[index], sendData[index + 1]);
-
-                    index += 2;
-
-
-                    String nameServer = extractDomainName(sendData, index);
+                    String nameServer = parser.getResourceName();
 
                     IPAddress = InetAddress.getByName(nameServer);
 
-                    System.arraycopy(receiveData, 0, sendData, 0, bufSize);
-                    sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, dnsPort);
+                    baseData[0]++;
+                    basePacket.setData(baseData, 0, basePacket.getLength());
+                    basePacket.setAddress(IPAddress);
+                    basePacket.setPort(dnsPort);
 
-                    serverSocket.send(sendPacket);
+                    serverSocket.send(basePacket);
 
-                    serverSocket.receive(sendPacket);
+                    recieveData = new byte[bufSize];
+                    recievePacket = new DatagramPacket(recieveData, recieveData.length);
+
+                    serverSocket.receive(recievePacket);
+
+                    while (recieveData[0] != baseData[0]) {
+                        serverSocket.receive(recievePacket);
+                    }
 
                     iteration++;
 
-                    // response code (RCODE) is 0 if there is no error
-                    responseCode = createNum(sendData[RcodeOffset], 4, 4);
+                    parser = new DnsParser(recieveData);
 
-                    // ANCOUNT = an unsigned 16 bit integer specifying the number of resource records in the answer section.
-                    answerCount = createNum(sendData[ANCountOffset], sendData[ANCountOffset + 1]);
+                    responseCode = parser.getResponseCode();
+                    answerCount = parser.getAnswerCount();
+                    nameServerCount = parser.getNameServerCount();
+                }
 
-                    // NSCOUNT = an unsigned 16 bit integer specifying the number of name server resource records in the authority records section.
-                    nameServerCount = createNum(sendData[NSCountOffset], sendData[NSCountOffset + 1]);
+                if (iteration >= maxIterations) {
+                    System.out.println("Can't resolve the query because the number of iterations exceeds 16");
+
+                    baseParser.changeHeaderFlags((byte) 2); // response code 2 indicates server failure.
+
+                    baseData[0] = firstByte;
+                    DatagramPacket sendPacket = new DatagramPacket(baseData, basePacket.getLength(), clientAddress, clientPort);
+                    serverSocket.send(sendPacket);
+                    continue;
                 }
 
                 // send the final response to the client
+                // changeHeaderFlags(recieveData, (byte) 0);
+                parser.changeHeaderFlags((byte)0); // response code 0 indicates no error. // TODO: What if one of the name node give me an error. why I change the response code to 0?
 
-
-
-
-//            String sentence = new String(Arrays.copyOfRange(receivePacket.getData(), 0, receivePacket.getLength()));
-//            System.out.println("RECEIVED: " + sentence);
-//            InetAddress IPAddress = receivePacket.getAddress();
-//            int port = receivePacket.getPort();
-//            String capitalizedSentence = sentence.toUpperCase();
-//
-//            sendData = capitalizedSentence.getBytes();
-//
-//            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, port);
-//            serverSocket.send(sendPacket);
+                recieveData[0] = firstByte;
+                DatagramPacket sendPacket = new DatagramPacket(recieveData, recievePacket.getLength(), clientAddress, clientPort);
+                serverSocket.send(sendPacket);
+                System.out.println("Resolved the query!");
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             System.err.println(ex.getMessage());
-        }
-    }
-
-    // Create an unsigned 16 bit integer from two bytes in big endian order.
-    private static int createNum(byte byte1, byte byte2) {
-        return ((byte1 << 8) | byte2);
-    }
-
-    // Input: b = 01011001, startBit = 3, lastBit = 6
-    // Output: 00001100
-    private static int createNum(byte b, int startBit, int lastBit)
-    {
-        // Shift the byte left so all the bits before the startBit are removed.
-        int result = ((b << startBit) & 0xFF);
-
-        // Shift the byte right so all the bits after lastBit are remove and the lastBit located in the 0 index.
-        result = result >> (startBit + 7 - lastBit);
-
-        return result;
-    }
-
-    private static String extractDomainName(byte[] data, int offset) {
-
-        // Assume the number of entries in the question section is 1.
-        StringBuilder domainName = new StringBuilder();
-
-        int i = offset; // The question section offset
-        int length = data[i];
-
-
-
-        // Check if the last two MSB are ones.
-        if ((length & 0b11000000) == 0b11000000) {
-            int offset123 = ((data[i] & 0b00111111) << 8) | data[i+1];
-
-            i = offset123;
-            length = data[i];
-
-            offset123++;
-
-            for (int j = offset123; j < offset123 + length; j++) {
-                domainName.append((char)data[j]);
+        } finally {
+            if (serverSocket != null) {
+                serverSocket.close();
             }
         }
-        else {
+    }
+
+    private static class DnsParser {
+
+        final int QRoffset = 2;
+        final int RcodeOffset = 3;
+        final int ANCountOffset = 6;
+        final int NSCountOffset = 8;
+        final int SectionQuestionOffset = 12;
+
+        private byte[] data;
+
+        private DnsParser(byte[] data) {
+            this.data = data;
+        }
+
+        private byte[] getData() {
+            return this.data;
+        }
+
+        // response code (RCODE) is 0 if there is no error
+        private int getResponseCode() {
+            return createNum(data[RcodeOffset], 4, 4);
+        }
+
+        // ANCOUNT = an unsigned 16 bit integer specifying the number of resource records in the answer section.
+        private int getAnswerCount() {
+            return createNum(data[ANCountOffset], data[ANCountOffset + 1]);
+        }
+
+        // NSCOUNT = an unsigned 16 bit integer specifying the number of name server resource records in the authority records section.
+        private int getNameServerCount() {
+            return createNum(data[NSCountOffset], data[NSCountOffset + 1]);
+        }
+
+        private String getQuestionName() {
+
+            // Assume the number of entries in the question section is 1.
+            StringBuilder domainName = new StringBuilder();
+
+            int i = SectionQuestionOffset; // The question section offset
+            int length = data[i];
+
             while (length > 0) {
 
                 i++;
 
                 for (int j = i; j < i + length; j++) {
-                    domainName.append((char)data[j]);
+                    domainName.append((char) data[j]);
                 }
 
                 i += length;
@@ -230,9 +223,206 @@ class SinkholeServer
                     domainName.append(".");
                 }
             }
+
+            return domainName.toString();
         }
 
-        return domainName.toString();
+        private String getResourceName() {
+            int index = skipQueriesSection(data, SectionQuestionOffset);
+
+            index = skipToResourceLength(data, index);
+
+            int resourceLength = createNum(data[index], data[index + 1]);
+
+            index += 2;
+
+            // Assume the number of entries in the question section is 1.
+            StringBuilder domainName = new StringBuilder();
+
+            int i = index; // The question section offset
+
+            while (i < index + resourceLength) {
+
+                // Check if the last two MSB are ones.
+                if ((data[i] & 0b11000000) == 0b11000000) {
+
+                    int currIndex = ((data[i] & 0b00111111) << 8) | data[i + 1];
+
+                    int currLength = data[currIndex];
+                    while (currLength > 0) {
+
+                        for (int j = currIndex + 1; j < currIndex + 1 + currLength; j++) {
+                            domainName.append((char) data[j]);
+                        }
+
+                        currIndex += currLength + 1;
+                        currLength = data[currIndex];
+
+                        if (currLength > 0) {
+                            domainName.append(".");
+                        }
+                    }
+
+                    i += 2;
+                } else {
+
+                    int currLength = data[i];
+
+                    for (int j = i + 1; j < i + 1 + currLength; j++) {
+                        domainName.append((char) data[j]);
+                    }
+
+                    i += currLength + 1;
+                }
+
+                if (i < index + resourceLength - 1) {
+                    domainName.append(".");
+                }
+            }
+
+            return domainName.toString();
+        }
+
+        private void changeHeaderFlags(byte responseCode) {
+
+            // Change QR to one to indicate the message is a response
+            byte qr = (byte) (data[QRoffset] | 0b10000000);
+            data[QRoffset] = qr;
+
+            // Change rd to one to indicate recursion desired
+            byte rd = (byte) (data[QRoffset] | 0b00000001); // TODO: make sure I need to add it.
+            data[QRoffset] = rd;
+
+            // Change ra to one to indicate recursion available
+            byte ra = (byte) (data[RcodeOffset] | 0b10000000); // TODO: make sure I need to add it.
+            data[RcodeOffset] = ra;
+
+            // Change AA to zero to specify that the responding name server
+            // is not an authority for the domain name in question section.
+            byte aa = (byte) (data[QRoffset] & 0b11111011);
+            data[QRoffset] = aa;
+
+            // change response code to Server failure
+            byte rcode = (byte) (data[RcodeOffset] | responseCode);
+            data[RcodeOffset] = rcode;
+        }
+
+        private boolean isResponse() {
+            return (data[QRoffset] & 0b10000000) != 0;
+        }
     }
+
+    private static void sendMessage(byte[] data, int length, InetAddress destAddress, int dstPort) throws IOException {
+        DatagramPacket sendPacket = new DatagramPacket(data, length, destAddress, dstPort);
+        serverSocket.send(sendPacket);
+    }
+
+    private static InetAddress getRandomRootServerIP() throws UnknownHostException {
+        int randomIndex = rnd.nextInt(rootServers.size());
+        String rootServer = rootServers.get(randomIndex);
+        return InetAddress.getByName(rootServer);
+    }
+
+    private static int skipToResourceLength(byte[] recieveData, int index) {
+
+        // Skip the domain name to which this resource record pertains.
+        while (recieveData[index] != 0) {
+            index++;
+        }
+
+        // Skip Type, Class and TTL (notice that TTL is 4 bytes)
+        index += 8;
+
+        return index;
+    }
+
+    private static int skipQueriesSection(byte[] recieveData, int SectionQuestionOffset) {
+
+        int index = SectionQuestionOffset;
+
+        // Skip the question name
+        while (recieveData[index] > 0) {
+            index++;
+        }
+        index++;
+
+        // Skip the question type and the question class
+        index += 4;
+
+        return index;
+    }
+
+    // Create an unsigned 16 bit integer from two bytes in big endian order.
+    private static int createNum(byte byte1, byte byte2) {
+        return ((byte1 << 8) | byte2);
+
+//        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
+//        bb.order(ByteOrder.BIG_ENDIAN);
+//        bb.put(baseData[IDoffset]);
+//        bb.put(baseData[IDoffset + 1]);
+//        short id = bb.getShort(0);
+    }
+
+    // Input: b = 01011001, startBit = 3, lastBit = 6
+    // Output: 00001100
+    private static int createNum(byte b, int startBit, int length) {
+
+        // Shift the byte left so all the bits before the startBit are removed.
+        int result = ((b << startBit) & 0xFF);
+
+        // Shift the byte right so all the bits after lastBit are remove and the lastBit located in the 0 index.
+        result = result >> (startBit + 7 - length);
+
+        return result;
+    }
+
+//    private static String extractDomainName(byte[] data, int offset, int length) {
+//
+//        // Assume the number of entries in the question section is 1.
+//        StringBuilder domainName = new StringBuilder();
+//
+//        int i = offset; // The question section offset
+//
+//        while (i < offset + length) {
+//
+//            // Check if the last two MSB are ones.
+//            if ((data[i] & 0b11000000) == 0b11000000) {
+//
+//                int currIndex = ((data[i] & 0b00111111) << 8) | data[i + 1];
+//
+//                int currLength = data[currIndex];
+//                while (currLength > 0) {
+//
+//                    for (int j = currIndex + 1; j < currIndex + 1 + currLength; j++) {
+//                        domainName.append((char) data[j]);
+//                    }
+//
+//                    currIndex += currLength + 1;
+//                    currLength = data[currIndex];
+//
+//                    if (currLength > 0) {
+//                        domainName.append(".");
+//                    }
+//                }
+//
+//                i += 2;
+//            } else {
+//
+//                int currLength = data[i];
+//
+//                for (int j = i + 1; j < i + 1 + currLength; j++) {
+//                    domainName.append((char) data[j]);
+//                }
+//
+//                i += currLength + 1;
+//            }
+//
+//            if (i < offset + length - 1) {
+//                domainName.append(".");
+//            }
+//        }
+//
+//        return domainName.toString();
+//    }
 
 }
