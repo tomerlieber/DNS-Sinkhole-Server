@@ -1,0 +1,6 @@
+Questions:
+1. Can I assume that the buffer size 1024 is enough to get all kinds of packets?
+2. Is 5 seconds enough time to resolve the query?
+3. Is it ok to send back the client a dns packet with response code 2 in case of number of iterations exceeds 16?
+   There is any such domain name so I can test this scenario?
+4. Relative path to block list. It was written in the Piazza. How can I handle the issue with the block list?

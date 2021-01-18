@@ -1,5 +1,8 @@
 package il.ac.idc.cs.sinkhole;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 class DnsParser {
 
     final int QRoffset = 2;
@@ -16,6 +19,10 @@ class DnsParser {
 
     byte[] getData() {
         return this.data;
+    }
+
+    void setData(byte[] data) {
+        this.data = data;
     }
 
     int getID() {
@@ -65,9 +72,9 @@ class DnsParser {
     }
 
     String getResourceName() {
-        int index = skipQueriesSection(data, SectionQuestionOffset);
+        int index = skipQueriesSection();
 
-        index = skipToResourceLength(data, index);
+        index = skipToResourceLength(index);
 
         int resourceLength = createNum(data[index], data[index + 1]);
 
@@ -148,10 +155,17 @@ class DnsParser {
         return (data[QRoffset] & 0b10000000) != 0;
     }
 
-    private int skipToResourceLength(byte[] recieveData, int index) {
+    private int skipToResourceLength(int index) {
 
         // Skip the domain name to which this resource record pertains.
-        while (recieveData[index] != 0) {
+        // Check if the last two MSB are ones.
+        if ((data[index] & 0b11000000) == 0b11000000) {
+            index+= 2;
+        }
+        else {
+            while (data[index] != 0) {
+                index++;
+            }
             index++;
         }
 
@@ -161,12 +175,12 @@ class DnsParser {
         return index;
     }
 
-    private int skipQueriesSection(byte[] recieveData, int SectionQuestionOffset) {
+    private int skipQueriesSection() {
 
         int index = SectionQuestionOffset;
 
         // Skip the question name
-        while (recieveData[index] > 0) {
+        while (data[index] > 0) {
             index++;
         }
         index++;
@@ -179,13 +193,16 @@ class DnsParser {
 
     // Create an unsigned 16 bit integer from two bytes in big endian order.
     private int createNum(byte byte1, byte byte2) {
-        return ((byte1 << 8) | byte2);
 
-//        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
-//        bb.order(ByteOrder.BIG_ENDIAN);
-//        bb.put(baseData[IDoffset]);
-//        bb.put(baseData[IDoffset + 1]);
-//        short id = bb.getShort(0);
+        // return (((byte1 << 8) & 0xFFFF) | byte2);
+
+        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
+        bb.order(ByteOrder.BIG_ENDIAN);
+        bb.put(byte1);
+        bb.put(byte2);
+        short id = bb.getShort(0);
+        // convert id to unsigned 16-bit
+        return id & 0xFFFF;
     }
 
     // Input: b = 01011001, startBit = 3, lastBit = 6
