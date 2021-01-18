@@ -77,43 +77,47 @@ class SinkholeServer {
                 }
 
                 // Send the DNS query to a randomly chosen root server
-                InetAddress IPAddress = getRandomRootServerIP();
+                // InetAddress IPAddress = getRandomRootServerIP();
 
-                basePacket.setAddress(IPAddress);
-                basePacket.setPort(dnsPort);
+//                basePacket.setAddress(IPAddress);
+//                basePacket.setPort(dnsPort);
+//
+//                serverSocket.send(basePacket);
+//
+//                System.out.println("\tSent a DNS query to: \t" + IPAddress.getHostName());
+//
+//                byte[] recieveData = new byte[bufSize];
+//                DatagramPacket recievePacket = new DatagramPacket(recieveData, recieveData.length);
+//
+//                serverSocket.receive(recievePacket);
 
-                serverSocket.send(basePacket);
+//                DnsParser parser = new DnsParser(recieveData);
+//
+//                while (!parser.isResponse() || parser.getID() != baseID) {
+//                    serverSocket.receive(recievePacket);
+//                    parser = new DnsParser(recieveData);
+//                }
 
-                System.out.println("\tSent a DNS query to: \t" + IPAddress.getHostName());
+                DnsParser parser = null;
+                byte[] recieveData = null;
+                DatagramPacket recievePacket = null;
 
-                byte[] recieveData = new byte[bufSize];
-                DatagramPacket recievePacket = new DatagramPacket(recieveData, recieveData.length);
+                int responseCode = 0;//parser.getResponseCode();
+                int answerCount = 0;//parser.getAnswerCount();
+                int nameServerCount = 1;//parser.getNameServerCount();
 
-                serverSocket.receive(recievePacket);
+                int iteration = 1;
 
-                DnsParser parser = new DnsParser(recieveData);
+                while (responseCode == 0 && answerCount == 0 && nameServerCount > 0 && iteration <= maxIterations) {
 
-                while (!parser.isResponse() || parser.getID() != baseID) {
-                    serverSocket.receive(recievePacket);
-                    parser = new DnsParser(recieveData);
-                }
+                    // First iteration: Send the DNS query to a randomly chosen root server
+                    // Next iterations: Send the query to the first name server in the AUTHORITY section
+                    String nameServer = (iteration == 1) ? getRandomRootServer() : parser.getResourceName();
+                    InetAddress IPAddress = InetAddress.getByName(nameServer);
 
-                int responseCode = parser.getResponseCode();
-                int answerCount = parser.getAnswerCount();
-                int nameServerCount = parser.getNameServerCount();
-
-                int iteration = 0;
-
-                while (responseCode == 0 && answerCount == 0 && nameServerCount > 0 && iteration < maxIterations) {
-
-                    // Send the query to the first name server in the AUTHORITY section
-                    String nameServer = parser.getResourceName();
-
-                    if (nameServer.equals("")) {
-                        nameServer = parser.getResourceName();
+                    if (nameServer.contains("local")) {
+                        String test = parser.getResourceName();
                     }
-
-                    IPAddress = InetAddress.getByName(nameServer);
 
                     basePacket.setAddress(IPAddress);
                     basePacket.setPort(dnsPort);
@@ -373,10 +377,9 @@ class SinkholeServer {
         serverSocket.send(sendPacket);
     }
 
-    private static InetAddress getRandomRootServerIP() throws UnknownHostException {
+    private static String getRandomRootServer() {
         int randomIndex = rnd.nextInt(rootServers.size());
-        String rootServer = rootServers.get(randomIndex);
-        return InetAddress.getByName(rootServer);
+        return rootServers.get(randomIndex);
     }
 
 
