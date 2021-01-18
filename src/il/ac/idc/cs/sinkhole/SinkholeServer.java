@@ -54,51 +54,49 @@ class SinkholeServer {
                 // Blocks until datagram received from the client
                 serverSocket.receive(basePacket);
 
-                byte firstByte = baseData[0];
+                DnsParser baseParser = new DnsParser(baseData);
 
+                int baseID = baseParser.getID();
                 InetAddress clientAddress = basePacket.getAddress();
                 int clientPort = basePacket.getPort();
 
-                DnsParser baseParser = new DnsParser(baseData);
-
                 String domainName = baseParser.getQuestionName();
 
-                System.out.println("Received a DNS query for domain name: " + domainName);
+                System.out.println();
+                System.out.println("Received a DNS query from: \t" + domainName);
 
                 // Check if the domain name that needs to be resolved is in the specified block list
                 if (blockList != null && blockList.contains(domainName)) {
 
-                    baseParser.changeHeaderFlags((byte)3); // response code 3 indicates NXDOMAIN error.
+                    baseParser.changeHeaderFlags((byte) 3); // response code 3 indicates NXDOMAIN error.
 
                     DatagramPacket sendPacket = new DatagramPacket(baseParser.getData(), basePacket.getLength(), clientAddress, clientPort);
                     serverSocket.send(sendPacket);
+                    System.out.println("Can't resolve the query because the domain name is in the block list");
                     continue;
                 }
 
                 // Send the DNS query to a randomly chosen root server
                 InetAddress IPAddress = getRandomRootServerIP();
 
-                baseData[0]++;
-                basePacket.setData(baseData, 0, basePacket.getLength());
                 basePacket.setAddress(IPAddress);
                 basePacket.setPort(dnsPort);
 
                 serverSocket.send(basePacket);
+
+                System.out.println("\tSent a DNS query to: \t" + IPAddress.getHostName());
 
                 byte[] recieveData = new byte[bufSize];
                 DatagramPacket recievePacket = new DatagramPacket(recieveData, recieveData.length);
 
                 serverSocket.receive(recievePacket);
 
-                while (recieveData[0] != baseData[0]) {
-                    serverSocket.receive(recievePacket);
-                }
-
                 DnsParser parser = new DnsParser(recieveData);
 
-                // TODO: Continue here tomorrow.
-
-                
+                while (!parser.isResponse() || parser.getID() != baseID) {
+                    serverSocket.receive(recievePacket);
+                    parser = new DnsParser(recieveData);
+                }
 
                 int responseCode = parser.getResponseCode();
                 int answerCount = parser.getAnswerCount();
@@ -111,27 +109,31 @@ class SinkholeServer {
                     // Send the query to the first name server in the AUTHORITY section
                     String nameServer = parser.getResourceName();
 
+                    if (nameServer.equals("")) {
+                        nameServer = parser.getResourceName();
+                    }
+
                     IPAddress = InetAddress.getByName(nameServer);
 
-                    baseData[0]++;
-                    basePacket.setData(baseData, 0, basePacket.getLength());
                     basePacket.setAddress(IPAddress);
                     basePacket.setPort(dnsPort);
 
                     serverSocket.send(basePacket);
+                    System.out.println("\tSent a DNS query to: \t" + IPAddress.getHostName());
 
                     recieveData = new byte[bufSize];
                     recievePacket = new DatagramPacket(recieveData, recieveData.length);
 
                     serverSocket.receive(recievePacket);
 
-                    while (recieveData[0] != baseData[0]) {
+                    parser = new DnsParser(recieveData);
+
+                    while (!parser.isResponse() || parser.getID() != baseID) {
                         serverSocket.receive(recievePacket);
+                        parser = new DnsParser(recieveData);
                     }
 
                     iteration++;
-
-                    parser = new DnsParser(recieveData);
 
                     responseCode = parser.getResponseCode();
                     answerCount = parser.getAnswerCount();
@@ -139,21 +141,18 @@ class SinkholeServer {
                 }
 
                 if (iteration >= maxIterations) {
-                    System.out.println("Can't resolve the query because the number of iterations exceeds 16");
 
                     baseParser.changeHeaderFlags((byte) 2); // response code 2 indicates server failure.
-
-                    baseData[0] = firstByte;
                     DatagramPacket sendPacket = new DatagramPacket(baseData, basePacket.getLength(), clientAddress, clientPort);
                     serverSocket.send(sendPacket);
+
+                    System.out.println("Can't resolve the query because the number of iterations exceeds 16");
                     continue;
                 }
 
                 // send the final response to the client
-                // changeHeaderFlags(recieveData, (byte) 0);
-                parser.changeHeaderFlags((byte)0); // response code 0 indicates no error. // TODO: What if one of the name node give me an error. why I change the response code to 0?
+                parser.changeHeaderFlags((byte) 0); // response code 0 indicates no error. // TODO: What if one of the name node give me an error. why I change the response code to 0?
 
-                recieveData[0] = firstByte;
                 DatagramPacket sendPacket = new DatagramPacket(recieveData, recievePacket.getLength(), clientAddress, clientPort);
                 serverSocket.send(sendPacket);
                 System.out.println("Resolved the query!");
@@ -183,6 +182,10 @@ class SinkholeServer {
 
         private byte[] getData() {
             return this.data;
+        }
+
+        private int getID() {
+            return createNum(data[0], data[1]);
         }
 
         // response code (RCODE) is 0 if there is no error
@@ -310,6 +313,59 @@ class SinkholeServer {
         private boolean isResponse() {
             return (data[QRoffset] & 0b10000000) != 0;
         }
+
+        private int skipToResourceLength(byte[] recieveData, int index) {
+
+            // Skip the domain name to which this resource record pertains.
+            while (recieveData[index] != 0) {
+                index++;
+            }
+
+            // Skip Type, Class and TTL (notice that TTL is 4 bytes)
+            index += 8;
+
+            return index;
+        }
+
+        private int skipQueriesSection(byte[] recieveData, int SectionQuestionOffset) {
+
+            int index = SectionQuestionOffset;
+
+            // Skip the question name
+            while (recieveData[index] > 0) {
+                index++;
+            }
+            index++;
+
+            // Skip the question type and the question class
+            index += 4;
+
+            return index;
+        }
+
+        // Create an unsigned 16 bit integer from two bytes in big endian order.
+        private int createNum(byte byte1, byte byte2) {
+            return ((byte1 << 8) | byte2);
+
+//        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
+//        bb.order(ByteOrder.BIG_ENDIAN);
+//        bb.put(baseData[IDoffset]);
+//        bb.put(baseData[IDoffset + 1]);
+//        short id = bb.getShort(0);
+        }
+
+        // Input: b = 01011001, startBit = 3, lastBit = 6
+        // Output: 00001100
+        private int createNum(byte b, int startBit, int length) {
+
+            // Shift the byte left so all the bits before the startBit are removed.
+            int result = ((b << startBit) & 0xFF);
+
+            // Shift the byte right so all the bits after lastBit are remove and the lastBit located in the 0 index.
+            result = result >> (startBit + 7 - length);
+
+            return result;
+        }
     }
 
     private static void sendMessage(byte[] data, int length, InetAddress destAddress, int dstPort) throws IOException {
@@ -323,106 +379,5 @@ class SinkholeServer {
         return InetAddress.getByName(rootServer);
     }
 
-    private static int skipToResourceLength(byte[] recieveData, int index) {
-
-        // Skip the domain name to which this resource record pertains.
-        while (recieveData[index] != 0) {
-            index++;
-        }
-
-        // Skip Type, Class and TTL (notice that TTL is 4 bytes)
-        index += 8;
-
-        return index;
-    }
-
-    private static int skipQueriesSection(byte[] recieveData, int SectionQuestionOffset) {
-
-        int index = SectionQuestionOffset;
-
-        // Skip the question name
-        while (recieveData[index] > 0) {
-            index++;
-        }
-        index++;
-
-        // Skip the question type and the question class
-        index += 4;
-
-        return index;
-    }
-
-    // Create an unsigned 16 bit integer from two bytes in big endian order.
-    private static int createNum(byte byte1, byte byte2) {
-        return ((byte1 << 8) | byte2);
-
-//        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
-//        bb.order(ByteOrder.BIG_ENDIAN);
-//        bb.put(baseData[IDoffset]);
-//        bb.put(baseData[IDoffset + 1]);
-//        short id = bb.getShort(0);
-    }
-
-    // Input: b = 01011001, startBit = 3, lastBit = 6
-    // Output: 00001100
-    private static int createNum(byte b, int startBit, int length) {
-
-        // Shift the byte left so all the bits before the startBit are removed.
-        int result = ((b << startBit) & 0xFF);
-
-        // Shift the byte right so all the bits after lastBit are remove and the lastBit located in the 0 index.
-        result = result >> (startBit + 7 - length);
-
-        return result;
-    }
-
-//    private static String extractDomainName(byte[] data, int offset, int length) {
-//
-//        // Assume the number of entries in the question section is 1.
-//        StringBuilder domainName = new StringBuilder();
-//
-//        int i = offset; // The question section offset
-//
-//        while (i < offset + length) {
-//
-//            // Check if the last two MSB are ones.
-//            if ((data[i] & 0b11000000) == 0b11000000) {
-//
-//                int currIndex = ((data[i] & 0b00111111) << 8) | data[i + 1];
-//
-//                int currLength = data[currIndex];
-//                while (currLength > 0) {
-//
-//                    for (int j = currIndex + 1; j < currIndex + 1 + currLength; j++) {
-//                        domainName.append((char) data[j]);
-//                    }
-//
-//                    currIndex += currLength + 1;
-//                    currLength = data[currIndex];
-//
-//                    if (currLength > 0) {
-//                        domainName.append(".");
-//                    }
-//                }
-//
-//                i += 2;
-//            } else {
-//
-//                int currLength = data[i];
-//
-//                for (int j = i + 1; j < i + 1 + currLength; j++) {
-//                    domainName.append((char) data[j]);
-//                }
-//
-//                i += currLength + 1;
-//            }
-//
-//            if (i < offset + length - 1) {
-//                domainName.append(".");
-//            }
-//        }
-//
-//        return domainName.toString();
-//    }
 
 }
