@@ -4,3 +4,5 @@ Questions:
 3. Is it ok to send back the client a dns packet with response code 2 in case of number of iterations exceeds 16?
    There is any such domain name so I can test this scenario?
 4. Relative path to block list. It was written in the Piazza. How can I handle the issue with the block list?
+5. How can I know that the project compile and work with Java 11 without warning?
+6. Understanding question: how do the DNS root server know to tell me directly that the domain name doesn't exist.

@@ -5,12 +5,9 @@ import java.nio.ByteOrder;
 
 class DnsParser {
 
-    final int QRoffset = 2;
-    final int RcodeOffset = 3;
-    final int ANCountOffset = 6;
-    final int NSCountOffset = 8;
-    final int SectionQuestionOffset = 12;
-
+    private final int QRoffset = 2;
+    private final int RcodeOffset = 3;
+    private final int SectionQuestionOffset = 12;
     private byte[] data;
 
     DnsParser(byte[] data) {
@@ -31,16 +28,19 @@ class DnsParser {
 
     // response code (RCODE) is 0 if there is no error
     int getResponseCode() {
-        return createNum(data[RcodeOffset], 4, 4);
+        return data[RcodeOffset] & 0xF;
+//        return createNum(data[RcodeOffset], 4, 4);
     }
 
     // ANCOUNT = an unsigned 16 bit integer specifying the number of resource records in the answer section.
     int getAnswerCount() {
+        int ANCountOffset = 6;
         return createNum(data[ANCountOffset], data[ANCountOffset + 1]);
     }
 
     // NSCOUNT = an unsigned 16 bit integer specifying the number of name server resource records in the authority records section.
     int getNameServerCount() {
+        int NSCountOffset = 8;
         return createNum(data[NSCountOffset], data[NSCountOffset + 1]);
     }
 
@@ -194,27 +194,12 @@ class DnsParser {
     // Create an unsigned 16 bit integer from two bytes in big endian order.
     private int createNum(byte byte1, byte byte2) {
 
-        // return (((byte1 << 8) & 0xFFFF) | byte2);
-
-        ByteBuffer bb = ByteBuffer.allocate(2); // TODO: check it
+        ByteBuffer bb = ByteBuffer.allocate(2);
         bb.order(ByteOrder.BIG_ENDIAN);
         bb.put(byte1);
         bb.put(byte2);
         short id = bb.getShort(0);
         // convert id to unsigned 16-bit
         return id & 0xFFFF;
-    }
-
-    // Input: b = 01011001, startBit = 3, lastBit = 6
-    // Output: 00001100
-    private int createNum(byte b, int startBit, int length) {
-
-        // Shift the byte left so all the bits before the startBit are removed.
-        int result = ((b << startBit) & 0xFF);
-
-        // Shift the byte right so all the bits after lastBit are remove and the lastBit located in the 0 index.
-        result = result >> (startBit + 7 - length);
-
-        return result;
     }
 }

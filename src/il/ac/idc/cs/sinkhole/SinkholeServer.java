@@ -23,6 +23,7 @@ class SinkholeServer {
     private static Random rnd;
     private static Set<String> blockList;
 
+    // Static constructor
     static {
         rootServers = Stream.of("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m")
                 .map(x -> x.concat(".root-servers.net")).collect(Collectors.toList());
@@ -35,7 +36,7 @@ class SinkholeServer {
         try {
 
             if (args.length > 1) {
-                System.err.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]");
+                System.err.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]"); // TODO: should be System.err or System.out
                 return;
             }
 
@@ -179,13 +180,10 @@ class SinkholeServer {
         }
 
         // send the final response to the client
-
-        // TODO: What if one of the name node give me an error. why I change the response code to 0?
-        // parser.changeHeaderFlags((byte)responseCode); // TODO: I think I need to remove the follow line with this one.
-
-        parser.changeHeaderFlags((byte) 0); // response code 0 indicates no error.
+        parser.changeHeaderFlags((byte)responseCode);
         sendPacket(receivePacket, clientAddress, clientPort);
-        System.out.println("Resolved the query!");
+        System.out.println((responseCode == 0) ? "Resolved the query!" :
+                ("Couldn't resolve the query (error code = " + responseCode + ")"));
     }
 
     private static String getRandomRootServer() {
