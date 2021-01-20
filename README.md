@@ -8,3 +8,4 @@ Things to read in order to write it:
 * Computer Networks - Recitation 04.pdf
 * https://pi-hole.net/
 * https://github.com/pi-hole/pi-hole
+* https://tools.ietf.org/html/rfc1035
