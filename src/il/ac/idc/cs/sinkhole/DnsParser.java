@@ -3,6 +3,10 @@ package il.ac.idc.cs.sinkhole;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+/*
+    DnsParser - the class receives a byte array of a DNS packet and allows
+    to extract many fields like: QDCOUNT, ANCOUNT, QNAME, RDATA and etc.
+ */
 class DnsParser {
 
     private final int QRoffset = 2;

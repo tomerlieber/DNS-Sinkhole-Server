@@ -36,7 +36,7 @@ class SinkholeServer {
         try {
 
             if (args.length > 1) {
-                System.out.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]"); // TODO: should be System.err or System.out
+                System.err.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]");
                 return;
             }
 
@@ -83,35 +83,39 @@ class SinkholeServer {
                             resolveDnsQuery(domainName, baseParser, basePacket, clientAddress, clientPort, basePacketID);
                         }
                         catch (IOException ex) {
-                            System.err.println("Can't resolve the query because of the follow error: " + ex.getMessage());
+                            try {
+                                int responseCode = ex.getClass().getName().equals("java.net.UnknownHostException") ? 3 : 2;
+                                baseParser.changeHeaderFlags((byte) responseCode); // response code 3 indicates NXDOMAIN error.
+                                sendPacket(basePacket, clientAddress, clientPort);
+                                System.err.println("Can't resolve the query because of the following error: " + ex.getMessage());
+
+                            } catch (IOException e) {
+                                System.err.println("Can't resolve the query and send a message to the client because of the following error: " + e.getMessage());
+                            }
                         }
                     };
 
                     Future<?> f = service.submit(r);
 
                     f.get(5, TimeUnit.SECONDS); // attempt the task for five seconds
-                }
-                catch (TimeoutException ex) {
+                } catch (TimeoutException ex) {
 
                     baseParser.changeHeaderFlags((byte) 2); // response code 2 indicates server failure.
                     DatagramPacket sendPacket = new DatagramPacket(baseParser.getData(), basePacket.getLength(), clientAddress, clientPort);
                     serverSocket.send(sendPacket);
 
-                    System.out.println("Can't resolve the query because it takes more than 5 seconds to handle it");
+                    System.err.println("Can't resolve the query because it takes more than 5 seconds to handle it");
                     if (!serverSocket.isClosed()) {
                         serverSocket.close();
                     }
                     serverSocket = new DatagramSocket(5300);
-                }
-                finally {
+                } finally {
                     service.shutdown();
                 }
             }
-        }
-        catch (SocketException ex) {
+        } catch (SocketException ex) {
             System.err.println("The DNS server can't create a new socket at port " + serverPort);
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             System.err.println("The DNS server stopped work because of the following error: " + ex.getMessage());
         } finally {
             if (serverSocket != null) {
@@ -120,14 +124,14 @@ class SinkholeServer {
         }
     }
 
-    private static void resolveDnsQuery(String domainName, DnsParser baseParser, DatagramPacket basePacket, InetAddress clientAddress, int clientPort, int basePacketID) throws IOException{
+    private static void resolveDnsQuery(String domainName, DnsParser baseParser, DatagramPacket basePacket, InetAddress clientAddress, int clientPort, int basePacketID) throws IOException {
 
         // Check if the domain name that needs to be resolved is in the specified block list
         if (blockList.contains(domainName)) {
 
             baseParser.changeHeaderFlags((byte) 3); // response code 3 indicates NXDOMAIN error.
             sendPacket(basePacket, clientAddress, clientPort);
-            System.out.println("Can't resolve the query because the domain name is in the block list");
+            System.err.println("Can't resolve the query because the domain name is in the block list");
             return;
         }
 
@@ -180,10 +184,15 @@ class SinkholeServer {
         }
 
         // send the final response to the client
-        parser.changeHeaderFlags((byte)responseCode);
+        parser.changeHeaderFlags((byte) responseCode);
         sendPacket(receivePacket, clientAddress, clientPort);
-        System.out.println((responseCode == 0) ? "Resolved the query!" :
-                ("Couldn't resolve the query (error code = " + responseCode + ")"));
+
+        if (responseCode == 0) {
+            System.out.println("Resolved the query!");
+        }
+        else {
+            System.err.println("Couldn't resolve the query (error code = " + responseCode + ")");
+        }
     }
 
     private static String getRandomRootServer() {
