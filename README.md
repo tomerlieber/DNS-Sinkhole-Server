@@ -9,3 +9,4 @@ Things to read in order to write it:
 * https://pi-hole.net/
 * https://github.com/pi-hole/pi-hole
 * https://tools.ietf.org/html/rfc1035
+* https://www.cloudflare.com/learning/dns/what-is-dns/
