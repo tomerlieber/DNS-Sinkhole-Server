@@ -36,7 +36,7 @@ class SinkholeServer {
         try {
 
             if (args.length > 1) {
-                System.err.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]"); // TODO: should be System.err or System.out
+                System.out.println("Usage: il.ac.idc.cs.sinkhole.SinkholeServer [blocklist-path]"); // TODO: should be System.err or System.out
                 return;
             }
 

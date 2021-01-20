@@ -29,7 +29,6 @@ class DnsParser {
     // response code (RCODE) is 0 if there is no error
     int getResponseCode() {
         return data[RcodeOffset] & 0xF;
-//        return createNum(data[RcodeOffset], 4, 4);
     }
 
     // ANCOUNT = an unsigned 16 bit integer specifying the number of resource records in the answer section.
@@ -46,85 +45,29 @@ class DnsParser {
 
     String getQuestionName() {
 
-        // Assume the number of entries in the question section is 1.
-        StringBuilder domainName = new StringBuilder();
-
-        int i = SectionQuestionOffset; // The question section offset
-        int length = data[i];
-
-        while (length > 0) {
-
-            i++;
-
-            for (int j = i; j < i + length; j++) {
-                domainName.append((char) data[j]);
-            }
-
-            i += length;
-            length = data[i];
-
-            if (length > 0) {
-                domainName.append(".");
-            }
-        }
-
-        return domainName.toString();
+        // Assume the number of entries in the question section is 1,
+        // and the domain name is compressed by type of a sequence of labels ending in a zero octet
+        return readSequenceOfLabelsUntilZero(SectionQuestionOffset);
     }
 
     String getResourceName() {
-        int index = skipQueriesSection();
 
-        index = skipToResourceLength(index);
+        int index = SectionQuestionOffset;
 
-        int resourceLength = createNum(data[index], data[index + 1]);
+        // Skip the question name (we assume there is only one question).
+        index = skipDomainName(index);
 
-        index += 2;
+        // Skip the question type and the question class
+        index += 4;
 
-        // Assume the number of entries in the question section is 1.
-        StringBuilder domainName = new StringBuilder();
+        // Skip the name of the first authoritative name server
+        index = skipDomainName(index);
 
-        int i = index; // The question section offset
+        // Skip Type, Class, TTL and RDLENGTH (notice that TTL is 4 bytes)
+        index += 10;
 
-        while (i < index + resourceLength) {
-
-            // Check if the last two MSB are ones.
-            if ((data[i] & 0b11000000) == 0b11000000) {
-
-                int currIndex = ((data[i] & 0b00111111) << 8) | data[i + 1];
-
-                int currLength = data[currIndex];
-                while (currLength > 0) {
-
-                    for (int j = currIndex + 1; j < currIndex + 1 + currLength; j++) {
-                        domainName.append((char) data[j]);
-                    }
-
-                    currIndex += currLength + 1;
-                    currLength = data[currIndex];
-
-                    if (currLength > 0) {
-                        domainName.append(".");
-                    }
-                }
-
-                i += 2;
-            } else {
-
-                int currLength = data[i];
-
-                for (int j = i + 1; j < i + 1 + currLength; j++) {
-                    domainName.append((char) data[j]);
-                }
-
-                i += currLength + 1;
-            }
-
-            if (i < index + resourceLength - 1) {
-                domainName.append(".");
-            }
-        }
-
-        return domainName.toString();
+        // Read the RDATA field of the first authoritative name server
+        return readDomainName(index);
     }
 
     void changeHeaderFlags(byte responseCode) {
@@ -155,40 +98,105 @@ class DnsParser {
         return (data[QRoffset] & 0b10000000) != 0;
     }
 
-    private int skipToResourceLength(int index) {
+    // Skip the domain name to which this resource record pertains.
+    private int skipDomainName(int index) {
 
-        // Skip the domain name to which this resource record pertains.
-        // Check if the last two MSB are ones.
-        if ((data[index] & 0b11000000) == 0b11000000) {
-            index+= 2;
+        // Check if the compression schema is a pointer.
+        if (isPointer(data[index])) {
+            index += 2;
         }
+        // Otherwise, the compression schema starts with a sequence of labels.
         else {
-            while (data[index] != 0) {
-                index++;
+            while (data[index] != 0 && !isPointer(data[index])) {
+                int currLength = data[index];
+                index += (1 + currLength);
             }
-            index++;
-        }
 
-        // Skip Type, Class and TTL (notice that TTL is 4 bytes)
-        index += 8;
+            // Check if the compression type ends with a zero octet or a pointer
+            if (data[index] == 0) {
+                index++; // Skip the zero octet
+            } else {
+                index += 2; // Skip the 2-byte pointer
+            }
+        }
 
         return index;
     }
 
-    private int skipQueriesSection() {
+    private String readDomainName(int offset) {
 
-        int index = SectionQuestionOffset;
+        StringBuilder domainName = new StringBuilder();
 
-        // Skip the question name
-        while (data[index] > 0) {
-            index++;
+        int i = offset;
+
+        // Check if the compression type is a pointer
+        if (isPointer(data[i])) {
+
+            int currIndex = getPointerOffset(i);// ((data[i] & 0b00111111) << 8) | data[i + 1];
+            String subDomainName = readSequenceOfLabelsUntilZero(currIndex);
+            domainName.append(subDomainName);
+        } else {
+
+            // Otherwise, the compression type starts with a sequence of labels.
+            while (data[i] != 0 && !isPointer(data[i])) {
+
+                int currLength = data[i];
+
+                for (int j = i + 1; j < i + 1 + currLength; j++) {
+                    domainName.append((char) data[j]);
+                }
+
+                i += currLength + 1;
+
+                if (data[i] != 0 && !isPointer(data[i])) {
+                    domainName.append(".");
+                }
+            }
+
+            // Check if the compression type ends with a pointer
+            if (isPointer(data[i])) {
+
+                domainName.append(".");
+                int currIndex = getPointerOffset(i); // ((data[i] & 0b00111111) << 8) | data[i + 1];
+                String subDomainName = readSequenceOfLabelsUntilZero(currIndex);
+                domainName.append(subDomainName);
+            }
         }
-        index++;
 
-        // Skip the question type and the question class
-        index += 4;
+        return domainName.toString();
+    }
 
-        return index;
+    // Side effect - advance the index parameter
+    private String readSequenceOfLabelsUntilZero(Integer index) {
+
+        StringBuilder domainName = new StringBuilder();
+
+        int curLength = data[index];
+
+        while (curLength != 0) {
+
+            for (int j = index + 1; j < index + 1 + curLength; j++) {
+                domainName.append((char) data[j]);
+            }
+
+            index += curLength + 1;
+            curLength = data[index];
+
+            if (curLength > 0) {
+                domainName.append(".");
+            }
+        }
+
+        return domainName.toString();
+    }
+
+    private int getPointerOffset(int index) {
+        return ((data[index] & 0b00111111) << 8) | data[index + 1];
+    }
+
+    private boolean isPointer(byte b) {
+        // Check if the two last msb are ones
+        return (b & 0b11000000) == 0b11000000;
     }
 
     // Create an unsigned 16 bit integer from two bytes in big endian order.
