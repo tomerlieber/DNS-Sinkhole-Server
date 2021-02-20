@@ -4,7 +4,7 @@ A DNS Sinkhole server that iteratively resolves any request for domains that not
 ## What is a typical flow of the server?
 The server is listening on port 5300  🠊
 
-The server receives a DNS request  🠊
+The server receives a DNS request from a client  🠊
 
 The server sends the request to a random root server  🠊
 
