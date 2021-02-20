@@ -6,6 +6,8 @@ The server is listening on port 5300  🠊
 
 The server receives a DNS request from a client  🠊
 
+The server checks if the domain name that needs to be resolved is specified in the blocklist file. If yes, return an error response  🠊
+
 The server sends the request to a random root server  🠊
 
 The server received a response from the random root server  🠊
