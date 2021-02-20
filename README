@@ -1,5 +1,0 @@
-Names: Tomer Lieber and Gavriel Wertheimer
-User Names: Tomer.Lieber and Gabriel.wertheimer
-
-SinkholeServer - the starting point of the server. Run in loops and resolve every incoming DNS query.
-DnsParser - the class receives a byte array of a DNS packet and allows to extract many fields like: QDCOUNT, ANCOUNT, QNAME, RDATA and etc.
