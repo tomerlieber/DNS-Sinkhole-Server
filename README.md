@@ -1,7 +1,7 @@
 # DNS Sinkhole Server
 A DNS Sinkhole server that iteratively resolves any request for domains that not included in a given list of domains
 
-## A typical flow of the server:
+## What is a typical flow of the server?
 The server is listening on port 5300  🠊
 
 The server receives a DNS request  🠊
