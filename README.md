@@ -16,22 +16,17 @@ A DNS Sinkhole server that iteratively resolves any request for domains that not
     ```$ java -cp out il.ac.idc.cs.sinkhole.SinkholeServer blocklist.txt```
 
 ## A typical flow of the server:
-The server is listening on port 5300
+The server is listening on port 5300 ⇨
 
-              ⇩
-The server receives a DNS request
+The server receives a DNS request ⇨
 
-              ⇩
-The server sends the request to a random root server
+The server sends the request to a random root server ⇨
 
-              ⇩
-The server received a response from the random root server
+The server received a response from the random root server ⇨
 
-              ⇩
-Until there is no answer, the server sends a request to the next DNS server. The name of the next DNS server is extracted from the authority section of the last response.
+Until there is no answer, the server sends a request to the next DNS server. The name of the next DNS server is extracted from the authority section of the last response ⇨
 
-              ⇩
-Send the final response to the client.
+Send the final response to the client
 
 ## Additional info:
 * Supports reading compressed data according to RFC1035 section 4.1.4.
