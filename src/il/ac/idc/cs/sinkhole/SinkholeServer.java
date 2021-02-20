@@ -9,6 +9,9 @@ import java.util.concurrent.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/*
+    SinkholeServer - the starting point of the server. Run in loops and resolve every incoming DNS query.
+*/
 class SinkholeServer {
 
     // Constants
